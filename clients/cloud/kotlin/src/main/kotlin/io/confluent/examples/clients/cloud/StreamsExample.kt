@@ -17,72 +17,115 @@
 
 package io.confluent.examples.clients.cloud
 
-import io.confluent.examples.clients.cloud.model.DataRecord
+import io.confluent.examples.clients.cloud.config.KafkaTopicConfig
+import io.confluent.examples.clients.cloud.model.Profile
+import io.confluent.examples.clients.cloud.model.ProfileUpdate
+import io.confluent.examples.clients.cloud.model.Transaction
+import io.confluent.examples.clients.cloud.model.profileSerde
+import io.confluent.examples.clients.cloud.model.profileUpdateSerde
+import io.confluent.examples.clients.cloud.model.transactionSerde
 import io.confluent.examples.clients.cloud.util.loadConfig
 import io.confluent.kafka.serializers.KafkaJsonDeserializer
 import io.confluent.kafka.serializers.KafkaJsonSerializer
 import org.apache.kafka.clients.consumer.ConsumerConfig.AUTO_OFFSET_RESET_CONFIG
 import org.apache.kafka.common.serialization.Serde
 import org.apache.kafka.common.serialization.Serdes
-import org.apache.kafka.common.serialization.Serdes.Long
 import org.apache.kafka.common.serialization.Serdes.serdeFrom
 import org.apache.kafka.streams.KafkaStreams
 import org.apache.kafka.streams.KeyValue
 import org.apache.kafka.streams.StreamsBuilder
-import org.apache.kafka.streams.StreamsConfig.*
+import org.apache.kafka.streams.StreamsConfig.APPLICATION_ID_CONFIG
+import org.apache.kafka.streams.StreamsConfig.CACHE_MAX_BYTES_BUFFERING_CONFIG
+import org.apache.kafka.streams.StreamsConfig.REPLICATION_FACTOR_CONFIG
 import org.apache.kafka.streams.kstream.Consumed
 import org.apache.kafka.streams.kstream.Grouped
+import org.apache.kafka.streams.kstream.Joined
+import org.apache.kafka.streams.kstream.Materialized
 import org.apache.kafka.streams.kstream.Printed
-
-
-//DataRecord Serde
-private fun dRSerde(): Serde<DataRecord> {
-
-  val properties = hashMapOf("json.value.type" to DataRecord::class.java)
-
-  val dRSerializer = KafkaJsonSerializer<DataRecord>()
-  dRSerializer.configure(properties, false)
-
-  val dRDeserializer = KafkaJsonDeserializer<DataRecord>()
-  dRDeserializer.configure(properties, false)
-
-  return serdeFrom(dRSerializer, dRDeserializer)
-}
+import org.apache.kafka.streams.kstream.Produced
 
 fun main(args: Array<String>) {
 
-  if (args.size != 2) {
-    println("Please provide command line arguments: <configPath> <topic>")
-    System.exit(1)
-  }
+    val threshold: Int = 100
 
-  val topic = args[1]
 
-  // Load properties from disk.
-  val props = loadConfig(args[0])
-  props[APPLICATION_ID_CONFIG] = "kotlin_streams_example_group_1"
-  // Disable caching to print the aggregation value after each record
-  props[CACHE_MAX_BYTES_BUFFERING_CONFIG] = 0
-  props[REPLICATION_FACTOR_CONFIG] = 3
-  props[AUTO_OFFSET_RESET_CONFIG] = "earliest"
+    if (args.size != 2) {
+        println("Please provide command line arguments: <configPath> <topic>")
+        System.exit(1)
+    }
 
-  val builder = StreamsBuilder()
-  val records = builder.stream(topic, Consumed.with(Serdes.String(), dRSerde()))
+    //val topic = args[1]
 
-  val counts = records.map { k, v -> KeyValue(k, v.count) }
-  counts.print(Printed.toSysOut<String, Long>().withLabel("Consumed record"))
+    // Load properties from disk.
+    val props = loadConfig(args[0])
+    props[APPLICATION_ID_CONFIG] = "kotlin_streams_example_group_1"
+    // Disable caching to print the aggregation value after each record
+    props[CACHE_MAX_BYTES_BUFFERING_CONFIG] = 0
+    props[REPLICATION_FACTOR_CONFIG] = 1
+    props[AUTO_OFFSET_RESET_CONFIG] = "earliest"
 
-  // Aggregate values by key
-  val countAgg = counts
-          .groupByKey(Grouped.with(Serdes.String(), Long()))
-          .reduce { aggValue, newValue -> aggValue!! + newValue!! }
-          .toStream()
-  countAgg.print(Printed.toSysOut<String, Long>().withLabel("Running count"))
+    val builder = StreamsBuilder()
+    val transactionStream = builder.stream(KafkaTopicConfig.transactionTopic, Consumed.with(Serdes.String(), transactionSerde()))
 
-  val streams = KafkaStreams(builder.build(), props)
-  streams.start()
+    val transactionRekeyed = transactionStream.map { _, v -> KeyValue(constructKey(v), v) }
+    transactionRekeyed.print(Printed.toSysOut<String, Transaction>().withLabel("Consumed record"))
 
-  // Add shutdown hook to respond to SIGTERM and gracefully close Kafka Streams
-  Runtime.getRuntime().addShutdownHook(Thread(Runnable { streams.close() }))
+    // Aggregate values by key
+    val transactionAggPerYearPerPerson = transactionRekeyed
+        .groupByKey(Grouped.with(Serdes.String(), transactionSerde()))
+        .aggregate(
+            { 0 },
+            { _: String, newValue: Transaction, aggValue: Int -> aggValue + newValue.payout },
+            Materialized.with(Serdes.String(), Serdes.Integer())
+        )
+        .toStream()
+    val transactionAggNeededForSSN = transactionAggPerYearPerPerson.filter { _, v ->
+        v >= threshold
+    }
+
+    val transactionAggNeededForSSNRekey = transactionAggNeededForSSN.map{ k, v ->
+        val profileId = getProfileIdFromKey(k)
+        KeyValue(
+            profileId, v
+        )
+    }
+
+    val profileTable = builder.table(
+        KafkaTopicConfig.profileTopic,
+        Consumed.with(Serdes.String(), profileSerde()),
+        Materialized.with(Serdes.String(), profileSerde())
+    )
+
+    val profileUpdateStream = transactionAggNeededForSSNRekey.join(
+        profileTable,
+        { _: Int, profile: Profile ->
+            ProfileUpdate(profile.copy(ssnDue = true), ProfileUpdate.Action.UPDATE_SSN)
+        },
+        Joined.with(Serdes.String(), Serdes.Integer(), profileSerde())
+            .withName("join-and-filter-profile-needed-ssn")
+    )
+
+    profileUpdateStream.to(KafkaTopicConfig.profileUpdateTopic, Produced.`with`(Serdes.String(), profileUpdateSerde()))
+
+    //countAgg.print(Printed.toSysOut<String, Float>().withLabel("Running count"))
+
+    val streams = KafkaStreams(builder.build(), props)
+    streams.start()
+
+    // Add shutdown hook to respond to SIGTERM and gracefully close Kafka Streams
+    Runtime.getRuntime().addShutdownHook(Thread(Runnable { streams.close() }))
 
 }
+
+fun constructKey(transaction: Transaction): String =
+    "${transaction.profileId}::${transaction.year}"
+
+
+fun getProfileIdFromKey(key: String): String =
+    key.split("::")[0]
+
+/*
+./gradlew runApp -PmainClass="io.confluent.examples.clients.cloud.StreamsExample" \
+     -PconfigPath="$HOME/.confluent/java.config" \
+     -Ptopic="test_transaction"
+ */

@@ -33,7 +33,6 @@ repositories {
 }
 
 val configPath: String by project
-val topic: String by project
 val mainClass: String by project
 
 tasks.withType<KotlinCompile> {
@@ -43,5 +42,5 @@ tasks.withType<KotlinCompile> {
 task("runApp", JavaExec::class) {
   classpath = sourceSets["main"].runtimeClasspath
   main = mainClass
-  args = listOf(configPath, topic)
+  args = listOf(configPath)
 }
