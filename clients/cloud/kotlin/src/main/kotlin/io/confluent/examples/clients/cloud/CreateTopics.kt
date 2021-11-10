@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-@file:JvmName("TransactionProducer")
+@file:JvmName("CreateTopics")
 
 package io.confluent.examples.clients.cloud
 
@@ -22,19 +22,17 @@ import io.confluent.examples.clients.cloud.model.Transaction
 import io.confluent.examples.clients.cloud.util.createTopic
 import io.confluent.examples.clients.cloud.util.loadConfig
 import io.confluent.kafka.serializers.KafkaJsonSerializer
+import org.apache.kafka.clients.admin.AdminClient
+import org.apache.kafka.clients.admin.NewTopic
 import org.apache.kafka.clients.producer.KafkaProducer
-import org.apache.kafka.clients.producer.ProducerConfig.ACKS_CONFIG
-import org.apache.kafka.clients.producer.ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG
-import org.apache.kafka.clients.producer.ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG
+import org.apache.kafka.clients.producer.ProducerConfig.*
 import org.apache.kafka.clients.producer.ProducerRecord
 import org.apache.kafka.clients.producer.RecordMetadata
+import org.apache.kafka.common.errors.TopicExistsException
 import org.apache.kafka.common.serialization.StringSerializer
-import java.util.UUID
+import java.util.*
+import java.util.concurrent.ExecutionException
 import kotlin.system.exitProcess
-
-val profileId = "820a8627-5da3-40c5-b5a7-ec39e5678719"
-val payoutAmount = 20000
-const val year = 2021
 
 fun main(args: Array<String>) {
     if (args.size != 1) {
@@ -45,33 +43,8 @@ fun main(args: Array<String>) {
     // Load properties from file
     val props = loadConfig(args[0])
 
-    // Create topic if needed
-    val topic = KafkaTopicConfig.transactionTopic
-    createTopic(topic, 1, 1, props)
+    createTopic(KafkaTopicConfig.transactionTopic, 1, 1, props)
     createTopic(KafkaTopicConfig.profileTopic, 1, 1, props)
     createTopic(KafkaTopicConfig.profileUpdateTopic, 1, 1, props)
-    // Add additional properties.
-    props[ACKS_CONFIG] = "all"
-    props[KEY_SERIALIZER_CLASS_CONFIG] = StringSerializer::class.qualifiedName
-    props[VALUE_SERIALIZER_CLASS_CONFIG] = KafkaJsonSerializer::class.qualifiedName
-
-    KafkaProducer<String, Transaction>(props).use { producer ->
-        val key = UUID.randomUUID().toString()
-        val record = Transaction(profileId = profileId, payout = payoutAmount, year = year)
-        println("Producing record: $key\t$record")
-
-        producer.send(ProducerRecord(topic, key, record)) { m: RecordMetadata, e: Exception? ->
-            when (e) {
-                // no exception, good to go!
-                null -> println("Produced record to topic ${m.topic()} partition [${m.partition()}] @ offset ${m.offset()}")
-                // print stacktrace in case of exception
-                else -> e.printStackTrace()
-            }
-        }
-
-
-        producer.flush()
-        println("1 messages were produced to topic $topic")
-    }
-
+    println("All three topics created")
 }

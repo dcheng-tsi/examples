@@ -25,12 +25,8 @@ import io.confluent.examples.clients.cloud.model.profileSerde
 import io.confluent.examples.clients.cloud.model.profileUpdateSerde
 import io.confluent.examples.clients.cloud.model.transactionSerde
 import io.confluent.examples.clients.cloud.util.loadConfig
-import io.confluent.kafka.serializers.KafkaJsonDeserializer
-import io.confluent.kafka.serializers.KafkaJsonSerializer
 import org.apache.kafka.clients.consumer.ConsumerConfig.AUTO_OFFSET_RESET_CONFIG
-import org.apache.kafka.common.serialization.Serde
 import org.apache.kafka.common.serialization.Serdes
-import org.apache.kafka.common.serialization.Serdes.serdeFrom
 import org.apache.kafka.streams.KafkaStreams
 import org.apache.kafka.streams.KeyValue
 import org.apache.kafka.streams.StreamsBuilder
@@ -44,17 +40,14 @@ import org.apache.kafka.streams.kstream.Materialized
 import org.apache.kafka.streams.kstream.Printed
 import org.apache.kafka.streams.kstream.Produced
 
+val threshold: Int = 60000
+
 fun main(args: Array<String>) {
 
-    val threshold: Int = 100
-
-
-    if (args.size != 2) {
-        println("Please provide command line arguments: <configPath> <topic>")
+    if (args.size != 1) {
+        println("Please provide command line arguments: <configPath>")
         System.exit(1)
     }
-
-    //val topic = args[1]
 
     // Load properties from disk.
     val props = loadConfig(args[0])
@@ -65,7 +58,8 @@ fun main(args: Array<String>) {
     props[AUTO_OFFSET_RESET_CONFIG] = "earliest"
 
     val builder = StreamsBuilder()
-    val transactionStream = builder.stream(KafkaTopicConfig.transactionTopic, Consumed.with(Serdes.String(), transactionSerde()))
+    val transactionStream =
+        builder.stream(KafkaTopicConfig.transactionTopic, Consumed.with(Serdes.String(), transactionSerde()))
 
     val transactionRekeyed = transactionStream.map { _, v -> KeyValue(constructKey(v), v) }
     transactionRekeyed.print(Printed.toSysOut<String, Transaction>().withLabel("Consumed record"))
@@ -79,11 +73,12 @@ fun main(args: Array<String>) {
             Materialized.with(Serdes.String(), Serdes.Integer())
         )
         .toStream()
+        .peek{k, v -> println("For transaction aggregation, key (profileId::year) is $k and total payout is $v")}
     val transactionAggNeededForSSN = transactionAggPerYearPerPerson.filter { _, v ->
         v >= threshold
     }
 
-    val transactionAggNeededForSSNRekey = transactionAggNeededForSSN.map{ k, v ->
+    val transactionAggNeededForSSNRekey = transactionAggNeededForSSN.map { k, v ->
         val profileId = getProfileIdFromKey(k)
         KeyValue(
             profileId, v
@@ -103,11 +98,9 @@ fun main(args: Array<String>) {
         },
         Joined.with(Serdes.String(), Serdes.Integer(), profileSerde())
             .withName("join-and-filter-profile-needed-ssn")
-    )
+    ).peek{k, v -> println("For profileUpdateStream, key (profileId) is $k and updated profile is $v")}
 
     profileUpdateStream.to(KafkaTopicConfig.profileUpdateTopic, Produced.`with`(Serdes.String(), profileUpdateSerde()))
-
-    //countAgg.print(Printed.toSysOut<String, Float>().withLabel("Running count"))
 
     val streams = KafkaStreams(builder.build(), props)
     streams.start()
@@ -123,9 +116,3 @@ fun constructKey(transaction: Transaction): String =
 
 fun getProfileIdFromKey(key: String): String =
     key.split("::")[0]
-
-/*
-./gradlew runApp -PmainClass="io.confluent.examples.clients.cloud.StreamsExample" \
-     -PconfigPath="$HOME/.confluent/java.config" \
-     -Ptopic="test_transaction"
- */

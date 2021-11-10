@@ -33,8 +33,8 @@ import kotlin.system.exitProcess
 
 fun main(args: Array<String>) {
 
-    if (args.size != 2) {
-        println("Please provide command line arguments: configPath topic")
+    if (args.size != 1) {
+        println("Please provide command line arguments: configPath")
         exitProcess(1)
     }
 
@@ -68,9 +68,3 @@ fun main(args: Array<String>) {
         }
     }
 }
-
-/*
- ./gradlew runApp -PmainClass="io.confluent.examples.clients.cloud.TransactionConsumer" \
-     -PconfigPath="$HOME/.confluent/java.config"\
-     -Ptopic="test_transaction"
- */
