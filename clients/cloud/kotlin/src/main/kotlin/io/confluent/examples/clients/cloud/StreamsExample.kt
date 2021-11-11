@@ -40,9 +40,11 @@ import org.apache.kafka.streams.kstream.Materialized
 import org.apache.kafka.streams.kstream.Printed
 import org.apache.kafka.streams.kstream.Produced
 
-val threshold: Int = 60000
+
 
 fun main(args: Array<String>) {
+
+    val threshold: Int = 60000
 
     if (args.size != 1) {
         println("Please provide command line arguments: <configPath>")

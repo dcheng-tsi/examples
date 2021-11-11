@@ -32,11 +32,11 @@ import org.apache.kafka.common.serialization.StringSerializer
 import java.util.UUID
 import kotlin.system.exitProcess
 
-val profileId = "820a8627-5da3-40c5-b5a7-ec39e5678719"
-val payoutAmount = 20000
-const val year = 2021
-
 fun main(args: Array<String>) {
+    val profileId = "820a8627-5da3-40c5-b5a7-ec39e5678719"
+    val payoutAmount = 20000
+    val year = 2021
+
     if (args.size != 1) {
         println("Please provide command line arguments: configPath")
         exitProcess(1)
@@ -45,11 +45,7 @@ fun main(args: Array<String>) {
     // Load properties from file
     val props = loadConfig(args[0])
 
-    // Create topic if needed
     val topic = KafkaTopicConfig.transactionTopic
-    createTopic(topic, 1, 1, props)
-    createTopic(KafkaTopicConfig.profileTopic, 1, 1, props)
-    createTopic(KafkaTopicConfig.profileUpdateTopic, 1, 1, props)
     // Add additional properties.
     props[ACKS_CONFIG] = "all"
     props[KEY_SERIALIZER_CLASS_CONFIG] = StringSerializer::class.qualifiedName

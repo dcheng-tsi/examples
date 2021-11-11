@@ -29,7 +29,7 @@ bootstrap.servers=localhost:9092
 
 2a. Run `/usr/libexec/java_home -V` to check if you have Java 11 installed
 
-2b. set java 11 by running "export JAVA_HOME=`/usr/libexec/java_home -v 11`"
+2b. set java 11 by running ```export JAVA_HOME=`/usr/libexec/java_home -v 11` ```
 
 3. Create kafka topic needed for the application by running:
 ```
@@ -97,8 +97,7 @@ CREATE TABLE profileNewUpdateWithNeeded WITH (KEY_FORMAT='JSON') AS
  SELECT profileId, year, SUM(ts.payout) as totalAnnualPayout, true as ssnDue
  FROM transactionTable ts
  GROUP BY year,profileId
- HAVING SUM(ts.payout) > 60000
- emit changes;
+ HAVING SUM(ts.payout) > 60000;
 
  Create TABLE profileUpdate WITH (KEY_FORMAT='JSON') AS
  SELECT pnuwn.profileId as profileId, pnuwn.year as year, pt.name as name, pnuwn.ssnDue as ssnDue
